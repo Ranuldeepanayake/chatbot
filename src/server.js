@@ -4,7 +4,7 @@ const port = Number(process.env.PORT) || 4000;
 const provider = (process.env.AI_PROVIDER || 'bedrock').toLowerCase() === 'ollama'
   ? 'ollama'
   : 'bedrock';
-const bedrockEndpoint = process.env.BEDROCK_URL || 'https://bedrock-runtime.ap-southeast-1.amazonaws.com';
+const bedrockEndpoint = process.env.BEDROCK_URL || 'https://bedrock-runtime.us-east-1.amazonaws.com';
 const bedrockModel = process.env.BEDROCK_MODEL || 'global.openai.gpt-6-luna';
 const ollamaEndpoint = process.env.OLLAMA_URL || 'http://localhost:11434/v1';
 const ollamaModel = process.env.OLLAMA_MODEL || 'qwen2.5-coder:7b';

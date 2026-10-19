@@ -2,7 +2,7 @@ const axios = require('axios');
 const express = require('express');
 
 const router = express.Router();
-const defaultBedrockUrl = 'https://bedrock-runtime.ap-southeast-1.amazonaws.com';
+const defaultBedrockUrl = 'https://bedrock-runtime.us-east-1.amazonaws.com';
 const defaultOllamaUrl = 'http://localhost:11434/v1';
 const defaultOllamaModel = 'qwen2.5-coder:7b';
 const defaultBedrockModel = 'global.openai.gpt-6-luna';
@@ -160,12 +160,14 @@ router.post('/', async (req, res) => {
     }));
     return res.json({ response });
   } catch (error) {
+    const upstreamBody = error.response && error.response.data;
     console.error(JSON.stringify({
       level: 'error',
       event: `${provider}_request_failed`,
       model,
       status: error.response && error.response.status,
       code: error.code,
+      upstreamMessage: upstreamBody && (upstreamBody.message || upstreamBody.Message || upstreamBody.error),
       message: error.response
         ? `${provider === 'bedrock' ? 'Bedrock Converse' : 'Ollama'} returned an error response`
         : 'Network or timeout error',

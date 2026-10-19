@@ -19,7 +19,7 @@ Set the provider and its connection settings as environment variables:
 | Variable | Required | Default | Description |
 | --- | --- | --- | --- |
 | `AI_PROVIDER` | No | `bedrock` | Default provider: `bedrock` or `ollama` |
-| `BEDROCK_URL` | No | `https://bedrock-runtime.ap-southeast-1.amazonaws.com` | Bedrock Runtime base URL used for Converse |
+| `BEDROCK_URL` | No | `https://bedrock-runtime.us-east-1.amazonaws.com` | Bedrock Runtime base URL used for Converse |
 | `BEDROCK_MODEL` | Bedrock only | `global.openai.gpt-6-luna` | `global.openai.gpt-6-luna` or `global.anthropic.claude-haiku-5-5` |
 | `ACCESS_TOKEN` | Bedrock only | — | Bearer token used to authenticate Bedrock |
 | `OLLAMA_URL` | No | `http://localhost:11434/v1` | Ollama OpenAI-compatible base URL |
@@ -62,7 +62,7 @@ PowerShell with Bedrock:
 
 ```powershell
 $env:AI_PROVIDER = "bedrock"
-$env:BEDROCK_URL = "https://bedrock-runtime.ap-southeast-1.amazonaws.com"
+$env:BEDROCK_URL = "https://bedrock-runtime.us-east-1.amazonaws.com"
 $env:BEDROCK_MODEL = "global.openai.gpt-6-luna"
 $env:ACCESS_TOKEN = "your-bedrock-access-token"
 npm start
@@ -80,7 +80,7 @@ Windows Command Prompt with Bedrock:
 
 ```bat
 set AI_PROVIDER=bedrock
-set BEDROCK_URL=https://bedrock-runtime.ap-southeast-1.amazonaws.com
+set BEDROCK_URL=https://bedrock-runtime.us-east-1.amazonaws.com
 set BEDROCK_MODEL=global.openai.gpt-6-luna
 set ACCESS_TOKEN=your-bedrock-access-token
 npm start
@@ -98,7 +98,7 @@ Linux/macOS Bash or Zsh with Bedrock:
 
 ```bash
 export AI_PROVIDER=bedrock
-export BEDROCK_URL=https://bedrock-runtime.ap-southeast-1.amazonaws.com
+export BEDROCK_URL=https://bedrock-runtime.us-east-1.amazonaws.com
 export BEDROCK_MODEL=global.openai.gpt-6-luna
 export ACCESS_TOKEN=your-bedrock-access-token
 npm start
