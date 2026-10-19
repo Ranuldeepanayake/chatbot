@@ -50,7 +50,7 @@
   <main class="app"><section class="shell">
     <header><div class="brand"><div class="logo">✦</div><div><h1>Orbit AI</h1><p class="subtitle">A calm space for better conversations</p></div></div><div class="status" id="status">Connecting</div></header>
     <div id="chatbox" role="log" aria-live="polite"><div class="empty" id="empty"><strong>What’s on your mind?</strong>Ask a question to start a conversation.</div></div>
-    <form id="chat-form"><div class="composer"><select id="provider" aria-label="AI provider"><option value="bedrock">Bedrock</option><option value="ollama">Ollama</option></select><input type="text" id="input" placeholder="Message Orbit..." autocomplete="off" autofocus><button type="submit">Send</button></div></form>
+    <form id="chat-form"><div class="composer"><select id="provider" aria-label="AI provider"><option value="bedrock">Bedrock</option><option value="ollama">Ollama</option></select><select id="model" aria-label="Model"></select><input type="text" id="input" placeholder="Message Orbit..." autocomplete="off" autofocus><button type="submit">Send</button></div></form>
   </section></main>
 
   <script>
@@ -58,6 +58,7 @@
     const input = document.getElementById('input');
     const chatbox = document.getElementById('chatbox');
     const provider = document.getElementById('provider');
+    const model = document.getElementById('model');
     const status = document.getElementById('status');
     const empty = document.getElementById('empty');
 
@@ -74,15 +75,28 @@
       chatbox.scrollTop = chatbox.scrollHeight;
     }
 
+    let configuredModels = {};
+    function setModel(providerName) {
+      model.replaceChildren();
+      (configuredModels[providerName] || []).forEach((item) => {
+        const option = document.createElement('option');
+        option.value = item.id;
+        option.textContent = item.label;
+        model.appendChild(option);
+      });
+    }
+
     async function loadConfig() {
       try {
         const response = await fetch('/chat/config');
         const config = await response.json();
         provider.value = config.provider;
+        configuredModels = config.models || {};
+        setModel(config.provider);
         status.textContent = config.provider === 'ollama' ? `Ollama · ${config.ollama.model}` : 'Bedrock ready';
       } catch { status.textContent = 'Ready'; }
     }
-    provider.addEventListener('change', () => { status.textContent = provider.value === 'ollama' ? 'Ollama selected' : 'Bedrock selected'; });
+    provider.addEventListener('change', () => { setModel(provider.value); status.textContent = provider.value === 'ollama' ? 'Ollama selected' : 'Bedrock selected'; });
     loadConfig();
 
     form.addEventListener('submit', async (event) => {
@@ -102,7 +116,7 @@
         const response = await fetch('/chat', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ prompt: message, provider: provider.value })
+          body: JSON.stringify({ prompt: message, provider: provider.value, model: model.value.trim() })
         });
         const data = await response.json();
 

@@ -2,32 +2,49 @@ const axios = require('axios');
 const express = require('express');
 
 const router = express.Router();
-const defaultPostUrl = 'https://bedrock-mantle.ap-southeast-1.api.aws/v1';
-const defaultOllamaUrl = 'http://localhost:11434/api/generate';
-const defaultOllamaModel = 'llama3.2';
+const defaultBedrockUrl = 'https://bedrock-runtime.ap-southeast-1.amazonaws.com';
+const defaultOllamaUrl = 'http://localhost:11434/v1';
+const defaultOllamaModel = 'qwen2.5-coder:7b';
+const defaultBedrockModel = 'global.openai.gpt-6-luna';
+const bedrockModels = [
+  { id: 'global.openai.gpt-6-luna', label: 'GPT-6 Luna' },
+  { id: 'global.anthropic.claude-haiku-5-5', label: 'Claude Haiku 5.5' }
+];
 
 function getProviderConfig() {
   const provider = (process.env.AI_PROVIDER || 'bedrock').toLowerCase();
-  const ollamaUrl = process.env.OLLAMA_URL || defaultOllamaUrl;
-  const ollamaModel = process.env.OLLAMA_MODEL || defaultOllamaModel;
+  const requestedBedrockModel = process.env.BEDROCK_MODEL || defaultBedrockModel;
+  const bedrockModel = bedrockModels.some((item) => item.id === requestedBedrockModel)
+    ? requestedBedrockModel
+    : defaultBedrockModel;
 
   return {
     provider: provider === 'ollama' ? 'ollama' : 'bedrock',
-    bedrockUrl: process.env.POST_REQUEST_URL || defaultPostUrl,
-    ollamaUrl,
-    ollamaModel
+    bedrockUrl: process.env.BEDROCK_URL || defaultBedrockUrl,
+    bedrockModel,
+    ollamaUrl: process.env.OLLAMA_URL || defaultOllamaUrl,
+    ollamaModel: process.env.OLLAMA_MODEL || defaultOllamaModel
   };
 }
 
-// Bedrock models return different response shapes; normalize supported formats
-// to one string so the browser always receives { response: "..." }.
+function getChatCompletionsUrl(baseUrl) {
+  const normalizedUrl = baseUrl.replace(/\/$/, '');
+  return normalizedUrl.endsWith('/chat/completions')
+    ? normalizedUrl
+    : `${normalizedUrl}/chat/completions`;
+}
+
+function getConverseUrl(baseUrl, model) {
+  const normalizedUrl = baseUrl.replace(/\/$/, '');
+  const modelPath = encodeURIComponent(model);
+  return normalizedUrl.endsWith('/converse')
+    ? normalizedUrl
+    : `${normalizedUrl}/model/${modelPath}/converse`;
+}
+
+// Normalize Converse and OpenAI-compatible responses to one frontend shape.
 function getAssistantText(data) {
   const candidates = [
-    data && data.outputText,
-    data && data.generation,
-    data && data.completion,
-    data && data.results && data.results[0] && data.results[0].outputText,
-    data && data.outputs && data.outputs[0] && data.outputs[0].text,
     data && data.choices && data.choices[0] && data.choices[0].message && data.choices[0].message.content,
     data && data.choices && data.choices[0] && data.choices[0].text,
     data && data.output && data.output.message && Array.isArray(data.output.message.content) &&
@@ -37,23 +54,38 @@ function getAssistantText(data) {
   return candidates.find((candidate) => typeof candidate === 'string' && candidate.trim());
 }
 
+function getModelForRequest(config, provider, requestedModel) {
+  if (provider === 'ollama') {
+    return requestedModel || config.ollamaModel;
+  }
+
+  return bedrockModels.some((item) => item.id === requestedModel)
+    ? requestedModel
+    : config.bedrockModel;
+}
+
 router.get('/config', (req, res) => {
   const config = getProviderConfig();
   res.json({
     provider: config.provider,
-    model: config.provider === 'ollama' ? config.ollamaModel : null,
+    model: config.provider === 'ollama' ? config.ollamaModel : config.bedrockModel,
+    models: {
+      bedrock: bedrockModels,
+      ollama: [{ id: config.ollamaModel, label: config.ollamaModel }]
+    },
     ollama: {
       configured: Boolean(process.env.OLLAMA_URL || process.env.OLLAMA_MODEL),
       model: config.ollamaModel
     },
     bedrock: {
-      configured: Boolean(process.env.ACCESS_TOKEN)
+      configured: Boolean(process.env.ACCESS_TOKEN),
+      model: config.bedrockModel
     }
   });
 });
 
-// POST /chat validates the browser request, invokes the configured provider, and
-// translates its response into the stable API shape expected by the frontend.
+// Bedrock uses Converse for both configured models. Ollama uses its
+// OpenAI-compatible Chat Completions endpoint.
 router.post('/', async (req, res) => {
   const prompt = req.body && req.body.prompt;
 
@@ -66,9 +98,12 @@ router.post('/', async (req, res) => {
   const provider = requestedProvider === 'ollama' || requestedProvider === 'bedrock'
     ? requestedProvider
     : config.provider;
+  const requestedModel = req.body && typeof req.body.model === 'string'
+    ? req.body.model.trim()
+    : '';
+  const model = getModelForRequest(config, provider, requestedModel);
   const accessToken = process.env.ACCESS_TOKEN;
 
-  // Bedrock needs a token; Ollama is local and intentionally does not.
   if (provider === 'bedrock' && !accessToken) {
     console.error(JSON.stringify({
       level: 'error',
@@ -81,61 +116,62 @@ router.post('/', async (req, res) => {
   const startedAt = Date.now();
 
   try {
-    const upstreamResponse = provider === 'ollama'
-      ? await axios.post(config.ollamaUrl, {
-        model: config.ollamaModel,
-        prompt,
+    const isBedrock = provider === 'bedrock';
+    const url = isBedrock
+      ? getConverseUrl(config.bedrockUrl, model)
+      : getChatCompletionsUrl(config.ollamaUrl);
+    const body = isBedrock
+      ? {
+        messages: [{ role: 'user', content: [{ text: prompt }] }]
+      }
+      : {
+        model,
+        messages: [{ role: 'user', content: prompt }],
         stream: false
-      }, {
-        timeout: 120000,
-        headers: { 'Content-Type': 'application/json' }
-      })
-      : await axios.post(config.bedrockUrl, {
-        inputText: prompt
-      }, {
-        timeout: 30000,
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${accessToken}`
-        }
-      });
+      };
 
-    const response = provider === 'ollama'
-      ? upstreamResponse.data && upstreamResponse.data.response
-      : getAssistantText(upstreamResponse.data);
+    const upstreamResponse = await axios.post(url, body, {
+      timeout: 120000,
+      headers: {
+        'Content-Type': 'application/json',
+        ...(isBedrock ? { Authorization: `Bearer ${accessToken}` } : {})
+      }
+    });
 
-    // A successful HTTP status is not enough; ensure the model actually returned text.
+    const response = getAssistantText(upstreamResponse.data);
     if (!response) {
       console.error(JSON.stringify({
         level: 'error',
         event: `${provider}_invalid_response`,
+        model,
         status: upstreamResponse.status,
         durationMs: Date.now() - startedAt
       }));
-      return res.status(502).json({ error: `${provider === 'ollama' ? 'Ollama' : 'Bedrock'} returned an unexpected response format` });
+      return res.status(502).json({ error: `${isBedrock ? 'Bedrock Converse' : 'Ollama'} returned an unexpected response format` });
     }
 
     console.info(JSON.stringify({
       level: 'info',
       event: 'chat_completed',
       provider,
+      model,
       status: upstreamResponse.status,
       durationMs: Date.now() - startedAt
     }));
     return res.json({ response });
   } catch (error) {
-    // Log operational details without including the prompt, token, or upstream body.
     console.error(JSON.stringify({
       level: 'error',
       event: `${provider}_request_failed`,
+      model,
       status: error.response && error.response.status,
       code: error.code,
       message: error.response
-        ? `${provider === 'ollama' ? 'Ollama' : 'Bedrock'} returned an error response`
+        ? `${provider === 'bedrock' ? 'Bedrock Converse' : 'Ollama'} returned an error response`
         : 'Network or timeout error',
       durationMs: Date.now() - startedAt
     }));
-    return res.status(502).json({ error: `Failed to get a response from ${provider === 'ollama' ? 'Ollama' : 'Bedrock'}` });
+    return res.status(502).json({ error: `Failed to get a response from ${provider === 'bedrock' ? 'Bedrock Converse' : 'Ollama'}` });
   }
 });
 
