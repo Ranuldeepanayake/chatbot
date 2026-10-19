@@ -1,0 +1,10 @@
+services:
+  chatbot:
+    build: .
+    ports:
+      - "${HOST_PORT:-4000}:4000"
+    env_file:
+      - .env
+    environment:
+      PORT: 4000
+    restart: unless-stopped

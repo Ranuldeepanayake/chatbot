@@ -1,0 +1,127 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Orbit — AI Chat</title>
+  <style>
+    :root { color-scheme: dark; --bg: #080b14; --panel: rgba(18, 24, 41, .86); --panel-2: #141b2f; --line: #293452; --text: #eef2ff; --muted: #8d99b8; --accent: #8b7cff; --accent-2: #36d6c4; }
+    * { box-sizing: border-box; }
+    body {
+      font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      display: flex;
+      min-height: 100vh;
+      margin: 0;
+      color: var(--text);
+      background: radial-gradient(circle at 15% 10%, #1c2044 0, transparent 35%), radial-gradient(circle at 90% 90%, #123d4a 0, transparent 30%), var(--bg);
+      padding: 28px 16px;
+    }
+    .app { width: min(920px, 100%); margin: auto; }
+    .shell { border: 1px solid var(--line); border-radius: 24px; background: var(--panel); backdrop-filter: blur(18px); overflow: hidden; box-shadow: 0 24px 80px rgba(0,0,0,.35); }
+    header { display: flex; align-items: center; justify-content: space-between; gap: 20px; padding: 26px 30px; border-bottom: 1px solid var(--line); }
+    .brand { display: flex; gap: 14px; align-items: center; }
+    .logo { display: grid; place-items: center; width: 42px; height: 42px; border-radius: 13px; background: linear-gradient(135deg, var(--accent), var(--accent-2)); color: #08111b; font-size: 22px; font-weight: 800; }
+    h1 { font-size: 1.2rem; margin: 0 0 4px; letter-spacing: -.02em; }
+    .subtitle, .status { color: var(--muted); font-size: .82rem; margin: 0; }
+    .status { display: flex; align-items: center; gap: 8px; white-space: nowrap; }
+    .status::before { content: ''; width: 8px; height: 8px; background: var(--accent-2); border-radius: 50%; box-shadow: 0 0 12px var(--accent-2); }
+    #chatbox { height: min(58vh, 570px); padding: 28px 30px; overflow-y: auto; display: flex; flex-direction: column; gap: 18px; }
+    .empty { margin: auto; text-align: center; color: var(--muted); max-width: 350px; }
+    .empty strong { display: block; color: var(--text); font-size: 1.25rem; margin-bottom: 8px; }
+    .message { max-width: 78%; padding: 13px 16px; border-radius: 17px; line-height: 1.55; overflow-wrap: anywhere; white-space: pre-wrap; }
+    .message .label { display: block; font-size: .72rem; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; margin-bottom: 4px; opacity: .68; }
+    .user { align-self: flex-end; background: linear-gradient(135deg, #6658d9, #806ee8); }
+    .bot { align-self: flex-start; background: var(--panel-2); border: 1px solid var(--line); }
+    .error { align-self: center; color: #ffb5bd; background: rgba(161, 52, 72, .18); border: 1px solid rgba(255, 115, 132, .35); }
+    form { display: flex; gap: 12px; padding: 18px 24px 24px; border-top: 1px solid var(--line); }
+    .composer { flex: 1; display: flex; gap: 10px; align-items: center; background: var(--panel-2); border: 1px solid var(--line); border-radius: 15px; padding: 0 6px 0 15px; }
+    #input { flex: 1; min-width: 0; background: transparent; border: 0; color: var(--text); outline: 0; padding: 14px 0; font: inherit; }
+    #input::placeholder { color: #687593; }
+    button, select { font: inherit; }
+    button { border: 0; border-radius: 11px; padding: 11px 17px; cursor: pointer; color: white; background: var(--accent); font-weight: 700; transition: transform .15s, opacity .15s; }
+    button:hover { transform: translateY(-1px); }
+    button:disabled { cursor: wait; opacity: .55; transform: none; }
+    select { color: var(--text); background: var(--panel-2); border: 1px solid var(--line); border-radius: 10px; padding: 9px 28px 9px 10px; }
+    .typing { color: var(--muted); font-size: .8rem; padding-left: 4px; }
+    @media (max-width: 600px) { body { padding: 0; } .shell { min-height: 100vh; border-radius: 0; } header { padding: 22px 18px; } #chatbox { padding: 22px 18px; height: calc(100vh - 220px); } form { padding: 14px 14px 18px; } .message { max-width: 90%; } .status { display: none; } }
+  </style>
+</head>
+<body>
+  <main class="app"><section class="shell">
+    <header><div class="brand"><div class="logo">✦</div><div><h1>Orbit AI</h1><p class="subtitle">A calm space for better conversations</p></div></div><div class="status" id="status">Connecting</div></header>
+    <div id="chatbox" role="log" aria-live="polite"><div class="empty" id="empty"><strong>What’s on your mind?</strong>Ask a question to start a conversation.</div></div>
+    <form id="chat-form"><div class="composer"><select id="provider" aria-label="AI provider"><option value="bedrock">Bedrock</option><option value="ollama">Ollama</option></select><input type="text" id="input" placeholder="Message Orbit..." autocomplete="off" autofocus><button type="submit">Send</button></div></form>
+  </section></main>
+
+  <script>
+    const form = document.getElementById('chat-form');
+    const input = document.getElementById('input');
+    const chatbox = document.getElementById('chatbox');
+    const provider = document.getElementById('provider');
+    const status = document.getElementById('status');
+    const empty = document.getElementById('empty');
+
+    // Use textContent rather than HTML interpolation so chat text cannot inject markup.
+    function addMessage(label, message) {
+      empty?.remove();
+      const bubble = document.createElement('div');
+      bubble.className = `message ${label.toLowerCase()}`;
+      const title = document.createElement('span');
+      title.className = 'label';
+      title.textContent = label;
+      bubble.append(title, document.createTextNode(message));
+      chatbox.appendChild(bubble);
+      chatbox.scrollTop = chatbox.scrollHeight;
+    }
+
+    async function loadConfig() {
+      try {
+        const response = await fetch('/chat/config');
+        const config = await response.json();
+        provider.value = config.provider;
+        status.textContent = config.provider === 'ollama' ? `Ollama · ${config.ollama.model}` : 'Bedrock ready';
+      } catch { status.textContent = 'Ready'; }
+    }
+    provider.addEventListener('change', () => { status.textContent = provider.value === 'ollama' ? 'Ollama selected' : 'Bedrock selected'; });
+    loadConfig();
+
+    form.addEventListener('submit', async (event) => {
+      event.preventDefault();
+      const message = input.value.trim();
+      if (!message) return;
+
+      addMessage('You', message);
+      input.value = '';
+      // Prevent duplicate submissions while the model is generating a reply.
+      const button = form.querySelector('button');
+      button.disabled = true;
+      button.textContent = '...';
+
+      try {
+        // The server proxies this request to the selected provider and returns { response }.
+        const response = await fetch('/chat', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ prompt: message, provider: provider.value })
+        });
+        const data = await response.json();
+
+        if (!response.ok) {
+          throw new Error(data.error || `Request failed (${response.status})`);
+        }
+        if (typeof data.response !== 'string' || !data.response.trim()) {
+          throw new Error('The model returned an empty response');
+        }
+
+        addMessage('Bot', data.response);
+      } catch (error) {
+        addMessage('Error', error.message || 'Unable to contact the chat service');
+      } finally {
+        button.disabled = false;
+        button.textContent = 'Send';
+        input.focus();
+      }
+    });
+  </script>
+</body>
+</html>

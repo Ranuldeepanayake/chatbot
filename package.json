@@ -1,0 +1,13 @@
+{
+  "name": "ai-chatbot",
+  "version": "1.0.0",
+  "description": "A small AI chatbot using AWS Bedrock",
+  "main": "src/server.js",
+  "scripts": {
+    "start": "node src/server.js"
+  },
+  "dependencies": {
+    "express": "^4.17.1",
+    "axios": "^0.21.1"
+  }
+}
