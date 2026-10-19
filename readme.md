@@ -4,12 +4,14 @@ A small Node.js and Express web application with one chat endpoint and provider-
 
 - AWS Bedrock uses the Converse API for GPT-6 Luna and Claude Haiku 5.5.
 - Ollama uses its OpenAI-compatible Chat Completions API with Qwen 2.5 Coder 7B.
+- OpenAI uses the Responses API with an OpenAI API key.
 
 ## Requirements
 
 - Node.js 20 or later and npm (for local development)
 - An AWS Bedrock-compatible endpoint and bearer access token (Bedrock only)
 - Ollama running locally or on a reachable host (Ollama only)
+- An OpenAI API key (OpenAI only)
 - Docker and Docker Compose (optional)
 
 ## Configure
@@ -18,16 +20,19 @@ Set the provider and its connection settings as environment variables:
 
 | Variable | Required | Default | Description |
 | --- | --- | --- | --- |
-| `AI_PROVIDER` | No | `bedrock` | Default provider: `bedrock` or `ollama` |
+| `AI_PROVIDER` | No | `bedrock` | Default provider: `bedrock`, `openai`, or `ollama` |
 | `BEDROCK_URL` | No | `https://bedrock-runtime.us-east-1.amazonaws.com` | Bedrock Runtime base URL used for Converse |
 | `BEDROCK_MODEL` | Bedrock only | `global.openai.gpt-6-luna` | `global.openai.gpt-6-luna` or `global.anthropic.claude-haiku-5-5` |
 | `ACCESS_TOKEN` | Bedrock only | — | Bearer token used to authenticate Bedrock |
 | `OLLAMA_URL` | No | `http://localhost:11434/v1` | Ollama OpenAI-compatible base URL |
 | `OLLAMA_MODEL` | No | `qwen2.5-coder:7b` | Model name installed in Ollama |
+| `OPENAI_URL` | No | `https://api.openai.com/v1` | OpenAI API base URL |
+| `OPENAI_MODEL` | No | `gpt-6-luna` | OpenAI model ID |
+| `OPENAI_API_KEY` | OpenAI only | — | OpenAI API key |
 | `PORT` | No | `4000` | Port on which the application listens |
 | `HOST_PORT` | No | `4000` | Host port exposed by Docker Compose |
 
-The browser always calls `POST /chat`. Bedrock requests use Converse JSON with `messages[].content[].text`; Ollama requests use OpenAI-compatible JSON with `model` and `messages[].content`. Do not commit real credentials.
+The browser always calls `POST /chat`. Bedrock requests use Converse JSON with `messages[].content[].text`; Ollama requests use OpenAI-compatible JSON with `model` and `messages[].content`; OpenAI requests use the Responses API. Do not commit real credentials.
 
 ### Supported models
 
@@ -40,7 +45,9 @@ The Bedrock model selector is intentionally limited to these two model IDs:
 
 The Ollama model is `qwen2.5-coder:7b` by default. The selected model is sent with each request. Bedrock model IDs are validated server-side; an unsupported Bedrock model falls back to the configured default.
 
-This split is intentional: Bedrock Converse supports both required Bedrock models, while Claude Haiku 5.5 is not supported by Bedrock Chat Completions. Ollama is not a Bedrock service, so it uses Ollama's OpenAI-compatible endpoint. See the [Bedrock Converse API](https://docs.aws.amazon.com/bedrock/latest/APIReference/API_runtime_Converse.html), [Bedrock model compatibility table](https://docs.aws.amazon.com/bedrock/latest/userguide/models-api-compatibility.html), and [Ollama OpenAI compatibility documentation](https://github.com/ollama/ollama/blob/main/docs/api/openai-compatibility.mdx).
+The OpenAI selector includes `gpt-6-astra`, `gpt-6.1-sol`, and `gpt-6-luna`. Set `OPENAI_MODEL` to choose the initial default. The model can also be changed from the UI.
+
+This split is intentional: Bedrock Converse supports both required Bedrock models, while Claude Haiku 5.5 is not supported by Bedrock Chat Completions. Ollama is not a Bedrock service, so it uses Ollama's OpenAI-compatible endpoint. OpenAI uses the official Responses API. See the [Bedrock Converse API](https://docs.aws.amazon.com/bedrock/latest/APIReference/API_runtime_Converse.html), [Bedrock model compatibility table](https://docs.aws.amazon.com/bedrock/latest/userguide/models-api-compatibility.html), [Ollama OpenAI compatibility documentation](https://github.com/ollama/ollama/blob/main/docs/api/openai-compatibility.mdx), and [OpenAI Responses API](https://developers.openai.com/api/docs/guides/text).
 
 ## Run locally
 
@@ -58,6 +65,15 @@ $env:OLLAMA_MODEL = "qwen2.5-coder:7b"
 npm start
 ```
 
+PowerShell with OpenAI:
+
+```powershell
+$env:AI_PROVIDER = "openai"
+$env:OPENAI_MODEL = "gpt-6-luna"
+$env:OPENAI_API_KEY = "your-openai-api-key"
+npm start
+```
+
 PowerShell with Bedrock:
 
 ```powershell
@@ -68,11 +84,29 @@ $env:ACCESS_TOKEN = "your-bedrock-access-token"
 npm start
 ```
 
+Windows Command Prompt with OpenAI:
+
+```bat
+set AI_PROVIDER=openai
+set OPENAI_MODEL=gpt-6-luna
+set OPENAI_API_KEY=your-openai-api-key
+npm start
+```
+
 Windows Command Prompt with Ollama (temporary for the current terminal):
 
 ```bat
 set AI_PROVIDER=ollama
 set OLLAMA_MODEL=qwen2.5-coder:7b
+npm start
+```
+
+Linux/macOS Bash or Zsh with OpenAI:
+
+```bash
+export AI_PROVIDER=openai
+export OPENAI_MODEL=gpt-6-luna
+export OPENAI_API_KEY=your-openai-api-key
 npm start
 ```
 
@@ -108,7 +142,7 @@ The variables only affect the terminal session in which they are set. They are c
 
 Open <http://localhost:4000>. The provider can also be changed in the UI. The browser sends prompts to `POST /chat`; successful replies are returned as `{ "response": "..." }`.
 
-The model selector is populated by `GET /chat/config`. Select `GPT-6 Luna` or `Claude Haiku 5.5` for Bedrock, or `qwen2.5-coder:7b` for Ollama. Changing the provider updates the available model list.
+The model selector is populated by `GET /chat/config`. Select `GPT-6 Luna` or `Claude Haiku 5.5` for Bedrock, an OpenAI GPT model for OpenAI, or `qwen2.5-coder:7b` for Ollama. Changing the provider updates the available model list.
 
 ## Run with Docker Compose
 
@@ -144,7 +178,7 @@ Dockerfile         Container image definition
 
 ## Logging and errors
 
-At startup, the server writes a structured `server_started` log containing the selected provider, port, sanitized Bedrock/Ollama endpoints, configured model names, and `accessTokenConfigured` booleans. It never logs the token value. Runtime logs include provider, model, upstream status, and request duration; prompts and access tokens are not logged. Invalid prompts receive `400`; provider request failures or unrecognized response formats receive a clear `502` error shown in the chat UI.
+At startup, the server writes a structured `server_started` log containing the selected provider, port, sanitized Bedrock/Ollama/OpenAI endpoints, configured model names, and credential-presence booleans. It never logs token values. Runtime logs include provider, model, upstream status, and request duration; prompts and credentials are not logged. Invalid prompts receive `400`; provider request failures or unrecognized response formats receive a clear `502` error shown in the chat UI.
 
 ## Request formats
 
@@ -188,7 +222,17 @@ For Ollama, the server translates it to `/v1/chat/completions`:
 }
 ```
 
-Both upstream response formats are normalized to:
+For OpenAI, the server translates it to `/v1/responses`:
+
+```json
+{
+  "model": "gpt-6-luna",
+  "input": "Write a short greeting.",
+  "store": false
+}
+```
+
+All upstream response formats are normalized to:
 
 ```json
 { "response": "..." }
