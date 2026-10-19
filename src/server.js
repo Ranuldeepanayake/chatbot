@@ -1,13 +1,16 @@
 const app = require('./app');
 
 const port = Number(process.env.PORT) || 4000;
-const provider = (process.env.AI_PROVIDER || 'bedrock').toLowerCase() === 'ollama'
-  ? 'ollama'
+const configuredProvider = (process.env.AI_PROVIDER || 'bedrock').toLowerCase();
+const provider = ['bedrock', 'openai', 'ollama'].includes(configuredProvider)
+  ? configuredProvider
   : 'bedrock';
 const bedrockEndpoint = process.env.BEDROCK_URL || 'https://bedrock-runtime.us-east-1.amazonaws.com';
 const bedrockModel = process.env.BEDROCK_MODEL || 'global.openai.gpt-6-luna';
 const ollamaEndpoint = process.env.OLLAMA_URL || 'http://localhost:11434/v1';
 const ollamaModel = process.env.OLLAMA_MODEL || 'qwen2.5-coder:7b';
+const openaiEndpoint = process.env.OPENAI_URL || 'https://api.openai.com/v1';
+const openaiModel = process.env.OPENAI_MODEL || 'gpt-6-luna';
 
 // Log where requests are sent without leaking credentials embedded in a URL.
 function safeEndpoint(value) {
@@ -40,6 +43,11 @@ const server = app.listen(port, () => {
         endpoint: safeEndpoint(ollamaEndpoint),
         model: ollamaModel,
         accessTokenConfigured: false
+      },
+      openai: {
+        endpoint: safeEndpoint(openaiEndpoint),
+        model: openaiModel,
+        apiKeyConfigured: Boolean(process.env.OPENAI_API_KEY)
       }
     }
   }));
