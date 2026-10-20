@@ -5,18 +5,28 @@ const router = express.Router();
 const defaultBedrockUrl = 'https://bedrock-runtime.us-east-1.amazonaws.com';
 const defaultOllamaUrl = 'http://localhost:11434/v1';
 const defaultOllamaModel = 'qwen2.5-coder:7b';
-const defaultBedrockModel = 'global.openai.gpt-6-luna';
+const defaultBedrockModel = 'global.amazon.nova-2-lite-v1:0';
 const defaultOpenaiUrl = 'https://api.openai.com/v1';
 const defaultOpenaiModel = 'gpt-6-luna';
+const maxResponseChars = getPositiveInteger(process.env.MAX_RESPONSE_CHARS, 200000, 1000000);
+const maxUpstreamResponseBytes = 8 * 1024 * 1024;
 const bedrockModels = [
   { id: 'global.openai.gpt-6-luna', label: 'GPT-6 Luna' },
-  { id: 'global.anthropic.claude-haiku-5-5', label: 'Claude Haiku 5.5' }
+  { id: 'global.anthropic.claude-haiku-5-5', label: 'Claude Haiku 5.5' },
+  { id: 'global.amazon.nova-2-lite-v1:0', label: 'Amazon Nova 2 Lite' }
 ];
 const openaiModels = [
   { id: 'gpt-6-astra', label: 'GPT-6 Astra' },
   { id: 'gpt-6.1-sol', label: 'GPT-6.1 Sol' },
   { id: 'gpt-6-luna', label: 'GPT-6 Luna' }
 ];
+
+function getPositiveInteger(value, fallback, maximum) {
+  const parsed = Number.parseInt(value, 10);
+  return Number.isInteger(parsed) && parsed > 0
+    ? Math.min(parsed, maximum)
+    : fallback;
+}
 
 function getProviderConfig() {
   const provider = (process.env.AI_PROVIDER || 'bedrock').toLowerCase();
@@ -70,6 +80,17 @@ function getAssistantText(data) {
   return candidates.find((candidate) => typeof candidate === 'string' && candidate.trim());
 }
 
+function limitResponse(text) {
+  if (text.length <= maxResponseChars) {
+    return { response: text, truncated: false };
+  }
+
+  return {
+    response: `${text.slice(0, maxResponseChars)}\n\n[Output truncated to keep the chat responsive.]`,
+    truncated: true
+  };
+}
+
 function getModelForRequest(config, provider, requestedModel) {
   if (provider === 'openai') {
     return openaiModels.some((item) => item.id === requestedModel)
@@ -108,7 +129,8 @@ router.get('/config', (req, res) => {
     openai: {
       configured: Boolean(process.env.OPENAI_API_KEY),
       model: config.openaiModel
-    }
+    },
+    limits: { maxResponseChars }
   });
 });
 
@@ -173,6 +195,8 @@ router.post('/', async (req, res) => {
 
     const upstreamResponse = await axios.post(url, body, {
       timeout: 120000,
+      maxContentLength: maxUpstreamResponseBytes,
+      maxBodyLength: maxUpstreamResponseBytes,
       headers: {
         'Content-Type': 'application/json',
         ...(isBedrock ? { Authorization: `Bearer ${accessToken}` } : {}),
@@ -180,8 +204,8 @@ router.post('/', async (req, res) => {
       }
     });
 
-    const response = getAssistantText(upstreamResponse.data);
-    if (!response) {
+    const assistantText = getAssistantText(upstreamResponse.data);
+    if (!assistantText) {
       console.error(JSON.stringify({
         level: 'error',
         event: `${provider}_invalid_response`,
@@ -192,15 +216,18 @@ router.post('/', async (req, res) => {
       return res.status(502).json({ error: `${isBedrock ? 'Bedrock Converse' : isOpenai ? 'OpenAI Responses' : 'Ollama'} returned an unexpected response format` });
     }
 
+    const { response, truncated } = limitResponse(assistantText);
     console.info(JSON.stringify({
       level: 'info',
       event: 'chat_completed',
       provider,
       model,
       status: upstreamResponse.status,
+      outputChars: assistantText.length,
+      truncated,
       durationMs: Date.now() - startedAt
     }));
-    return res.json({ response });
+    return res.json({ response, truncated });
   } catch (error) {
     const upstreamBody = error.response && error.response.data;
     console.error(JSON.stringify({

@@ -2,7 +2,7 @@
 
 A small Node.js and Express web application with one chat endpoint and provider-specific adapters:
 
-- AWS Bedrock uses the Converse API for GPT-6 Luna and Claude Haiku 5.5.
+- AWS Bedrock uses the Converse API for GPT-6 Luna, Claude Haiku 5.5, and Amazon Nova 2 Lite.
 - Ollama uses its OpenAI-compatible Chat Completions API with Qwen 2.5 Coder 7B.
 - OpenAI uses the Responses API with an OpenAI API key.
 
@@ -22,7 +22,7 @@ Set the provider and its connection settings as environment variables:
 | --- | --- | --- | --- |
 | `AI_PROVIDER` | No | `bedrock` | Default provider: `bedrock`, `openai`, or `ollama` |
 | `BEDROCK_URL` | No | `https://bedrock-runtime.us-east-1.amazonaws.com` | Bedrock Runtime base URL used for Converse |
-| `BEDROCK_MODEL` | Bedrock only | `global.openai.gpt-6-luna` | `global.openai.gpt-6-luna` or `global.anthropic.claude-haiku-5-5` |
+| `BEDROCK_MODEL` | Bedrock only | `global.amazon.nova-2-lite-v1:0` | GPT-6 Luna, Claude Haiku 5.5, or Amazon Nova 2 Lite (see model IDs below) |
 | `ACCESS_TOKEN` | Bedrock only | — | Bearer token used to authenticate Bedrock |
 | `OLLAMA_URL` | No | `http://localhost:11434/v1` | Ollama OpenAI-compatible base URL |
 | `OLLAMA_MODEL` | No | `qwen2.5-coder:7b` | Model name installed in Ollama |
@@ -31,17 +31,23 @@ Set the provider and its connection settings as environment variables:
 | `OPENAI_API_KEY` | OpenAI only | — | OpenAI API key |
 | `PORT` | No | `4000` | Port on which the application listens |
 | `HOST_PORT` | No | `4000` | Host port exposed by Docker Compose |
+| `MAX_RESPONSE_CHARS` | No | `200000` | Maximum assistant text returned per message; output beyond this is safely truncated |
 
 The browser always calls `POST /chat`. Bedrock requests use Converse JSON with `messages[].content[].text`; Ollama requests use OpenAI-compatible JSON with `model` and `messages[].content`; OpenAI requests use the Responses API. Do not commit real credentials.
 
 ### Supported models
 
-The Bedrock model selector is intentionally limited to these two model IDs:
+The Bedrock model selector is intentionally limited to these model IDs:
 
 | Display name | Bedrock model ID | Request format |
 | --- | --- | --- |
 | GPT-6 Luna | `global.openai.gpt-6-luna` | Bedrock Converse |
 | Claude Haiku 5.5 | `global.anthropic.claude-haiku-5-5` | Bedrock Converse |
+| Amazon Nova 2 Lite | `global.amazon.nova-2-lite-v1:0` | Bedrock Converse |
+
+## Conversation controls
+
+Each assistant response has a **Copy** button that copies its text to the clipboard. The **Download** button in the header exports the complete conversation currently displayed in the browser as a UTF-8 `.txt` file. If a reply was truncated by `MAX_RESPONSE_CHARS`, the export contains that displayed, truncated reply.
 
 The Ollama model is `qwen2.5-coder:7b` by default. The selected model is sent with each request. Bedrock model IDs are validated server-side; an unsupported Bedrock model falls back to the configured default.
 
@@ -79,7 +85,7 @@ PowerShell with Bedrock:
 ```powershell
 $env:AI_PROVIDER = "bedrock"
 $env:BEDROCK_URL = "https://bedrock-runtime.us-east-1.amazonaws.com"
-$env:BEDROCK_MODEL = "global.openai.gpt-6-luna"
+$env:BEDROCK_MODEL = "global.amazon.nova-2-lite-v1:0"
 $env:ACCESS_TOKEN = "your-bedrock-access-token"
 npm start
 ```
@@ -115,7 +121,7 @@ Windows Command Prompt with Bedrock:
 ```bat
 set AI_PROVIDER=bedrock
 set BEDROCK_URL=https://bedrock-runtime.us-east-1.amazonaws.com
-set BEDROCK_MODEL=global.openai.gpt-6-luna
+set BEDROCK_MODEL=global.amazon.nova-2-lite-v1:0
 set ACCESS_TOKEN=your-bedrock-access-token
 npm start
 ```
@@ -133,7 +139,7 @@ Linux/macOS Bash or Zsh with Bedrock:
 ```bash
 export AI_PROVIDER=bedrock
 export BEDROCK_URL=https://bedrock-runtime.us-east-1.amazonaws.com
-export BEDROCK_MODEL=global.openai.gpt-6-luna
+export BEDROCK_MODEL=global.amazon.nova-2-lite-v1:0
 export ACCESS_TOKEN=your-bedrock-access-token
 npm start
 ```
@@ -142,7 +148,7 @@ The variables only affect the terminal session in which they are set. They are c
 
 Open <http://localhost:4000>. The provider can also be changed in the UI. The browser sends prompts to `POST /chat`; successful replies are returned as `{ "response": "..." }`.
 
-The model selector is populated by `GET /chat/config`. Select `GPT-6 Luna` or `Claude Haiku 5.5` for Bedrock, an OpenAI GPT model for OpenAI, or `qwen2.5-coder:7b` for Ollama. Changing the provider updates the available model list.
+The model selector is populated by `GET /chat/config`. Select GPT-6 Luna, Claude Haiku 5.5, or Amazon Nova 2 Lite for Bedrock; an OpenAI GPT model for OpenAI; or `qwen2.5-coder:7b` for Ollama. Changing the provider updates the available model list.
 
 ## Run with Docker Compose
 
@@ -178,7 +184,11 @@ Dockerfile         Container image definition
 
 ## Logging and errors
 
-At startup, the server writes a structured `server_started` log containing the selected provider, port, sanitized Bedrock/Ollama/OpenAI endpoints, configured model names, and credential-presence booleans. It never logs token values. Runtime logs include provider, model, upstream status, and request duration; prompts and credentials are not logged. Invalid prompts receive `400`; provider request failures or unrecognized response formats receive a clear `502` error shown in the chat UI.
+At startup, the server writes a structured `server_started` log containing the selected provider, port, response limit, sanitized Bedrock/Ollama/OpenAI endpoints, configured model names, and credential-presence booleans. It never logs token values. Runtime logs include provider, model, output length, truncation state, upstream status, and request duration; prompts and credentials are not logged. Invalid prompts receive `400`; provider request failures or unrecognized response formats receive a clear `502` error shown in the chat UI.
+
+## Large responses
+
+To keep the browser responsive, the server limits returned assistant text to `MAX_RESPONSE_CHARS` (default: `200000`). Larger replies are returned safely with a truncation notice, rather than causing the page or process to fail. The upstream response body is also capped at 8 MiB; an upstream response beyond that limit is returned as a normal chat error.
 
 ## Request formats
 

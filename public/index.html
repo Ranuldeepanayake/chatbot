@@ -25,14 +25,21 @@
     .subtitle, .status { color: var(--muted); font-size: .82rem; margin: 0; }
     .status { display: flex; align-items: center; gap: 8px; white-space: nowrap; }
     .status::before { content: ''; width: 8px; height: 8px; background: var(--accent-2); border-radius: 50%; box-shadow: 0 0 12px var(--accent-2); }
+    .status[data-provider="bedrock"]::before { background: #ffbf69; box-shadow: 0 0 12px #ffbf69; }
+    .status[data-provider="openai"]::before { background: #65d7b7; box-shadow: 0 0 12px #65d7b7; }
+    .status[data-provider="ollama"]::before { background: #8b7cff; box-shadow: 0 0 12px #8b7cff; }
+    .status[data-state="error"]::before { background: #ff7384; box-shadow: 0 0 12px #ff7384; }
+    .header-actions { display: flex; align-items: center; gap: 14px; }
     #chatbox { height: min(58vh, 570px); padding: 28px 30px; overflow-y: auto; display: flex; flex-direction: column; gap: 18px; }
     .empty { margin: auto; text-align: center; color: var(--muted); max-width: 350px; }
     .empty strong { display: block; color: var(--text); font-size: 1.25rem; margin-bottom: 8px; }
     .message { max-width: 78%; padding: 13px 16px; border-radius: 17px; line-height: 1.55; overflow-wrap: anywhere; white-space: pre-wrap; }
-    .message .label { display: block; font-size: .72rem; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; margin-bottom: 4px; opacity: .68; }
+    .message-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 4px; }
+    .message .label { font-size: .72rem; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; opacity: .68; }
     .user { align-self: flex-end; background: linear-gradient(135deg, #6658d9, #806ee8); }
     .bot { align-self: flex-start; background: var(--panel-2); border: 1px solid var(--line); }
     .error { align-self: center; color: #ffb5bd; background: rgba(161, 52, 72, .18); border: 1px solid rgba(255, 115, 132, .35); }
+    .notice { align-self: center; color: #ffe0a3; background: rgba(186, 132, 40, .15); border: 1px solid rgba(255, 205, 105, .3); font-size: .86rem; }
     form { display: flex; gap: 12px; padding: 18px 24px 24px; border-top: 1px solid var(--line); }
     .composer { flex: 1; display: flex; gap: 10px; align-items: center; background: var(--panel-2); border: 1px solid var(--line); border-radius: 15px; padding: 0 6px 0 15px; }
     #input { flex: 1; min-width: 0; background: transparent; border: 0; color: var(--text); outline: 0; padding: 14px 0; font: inherit; }
@@ -43,12 +50,15 @@
     button:disabled { cursor: wait; opacity: .55; transform: none; }
     select { color: var(--text); background: var(--panel-2); border: 1px solid var(--line); border-radius: 10px; padding: 9px 28px 9px 10px; }
     .typing { color: var(--muted); font-size: .8rem; padding-left: 4px; }
-    @media (max-width: 600px) { body { padding: 0; } .shell { min-height: 100vh; border-radius: 0; } header { padding: 22px 18px; } #chatbox { padding: 22px 18px; height: calc(100vh - 220px); } form { padding: 14px 14px 18px; } .message { max-width: 90%; } .status { display: none; } }
+    .copy-button, .download-button { padding: 6px 9px; border: 1px solid var(--line); background: transparent; color: var(--muted); font-size: .72rem; }
+    .copy-button:hover, .download-button:hover { color: var(--text); background: rgba(255,255,255,.06); }
+    .download-button:disabled { cursor: not-allowed; }
+    @media (max-width: 600px) { body { padding: 0; } .shell { min-height: 100vh; border-radius: 0; } header { padding: 22px 18px; } #chatbox { padding: 22px 18px; height: calc(100vh - 220px); } form { padding: 14px 14px 18px; } .message { max-width: 90%; } .status { display: none; } .header-actions { gap: 0; } }
   </style>
 </head>
 <body>
   <main class="app"><section class="shell">
-    <header><div class="brand"><div class="logo">✦</div><div><h1>Orbit AI</h1><p class="subtitle">A calm space for better conversations</p></div></div><div class="status" id="status">Connecting</div></header>
+    <header><div class="brand"><div class="logo">✦</div><div><h1>Orbit AI</h1><p class="subtitle">A calm space for better conversations</p></div></div><div class="header-actions"><button class="download-button" id="download-conversation" type="button" disabled>Download</button><div class="status" id="status">Connecting</div></div></header>
     <div id="chatbox" role="log" aria-live="polite"><div class="empty" id="empty"><strong>What’s on your mind?</strong>Ask a question to start a conversation.</div></div>
     <form id="chat-form"><div class="composer"><select id="provider" aria-label="AI provider"><option value="bedrock">Bedrock</option><option value="openai">ChatGPT / OpenAI</option><option value="ollama">Ollama</option></select><select id="model" aria-label="Model"></select><input type="text" id="input" placeholder="Message Orbit..." autocomplete="off" autofocus><button type="submit">Send</button></div></form>
   </section></main>
@@ -61,22 +71,63 @@
     const model = document.getElementById('model');
     const status = document.getElementById('status');
     const empty = document.getElementById('empty');
+    const downloadConversation = document.getElementById('download-conversation');
+    const conversation = [];
 
     // Use textContent rather than HTML interpolation so chat text cannot inject markup.
-    function addMessage(label, message) {
+    function addMessage(label, message, { copyable = false } = {}) {
       empty?.remove();
       const bubble = document.createElement('div');
       bubble.className = `message ${label.toLowerCase()}`;
+      const heading = document.createElement('div');
+      heading.className = 'message-head';
       const title = document.createElement('span');
       title.className = 'label';
       title.textContent = label;
-      bubble.append(title, document.createTextNode(message));
+      heading.appendChild(title);
+      if (copyable) {
+        const copyButton = document.createElement('button');
+        copyButton.className = 'copy-button';
+        copyButton.type = 'button';
+        copyButton.textContent = 'Copy';
+        copyButton.addEventListener('click', async () => {
+          try {
+            await copyText(message);
+            copyButton.textContent = 'Copied';
+            setTimeout(() => { copyButton.textContent = 'Copy'; }, 1600);
+          } catch {
+            copyButton.textContent = 'Copy failed';
+            setTimeout(() => { copyButton.textContent = 'Copy'; }, 1600);
+          }
+        });
+        heading.appendChild(copyButton);
+      }
+      bubble.append(heading, document.createTextNode(message));
       chatbox.appendChild(bubble);
+      conversation.push({ label, message });
+      downloadConversation.disabled = false;
       chatbox.scrollTop = chatbox.scrollHeight;
     }
 
+    async function copyText(text) {
+      if (navigator.clipboard?.writeText && window.isSecureContext) {
+        await navigator.clipboard.writeText(text);
+        return;
+      }
+      const textarea = document.createElement('textarea');
+      textarea.value = text;
+      textarea.style.position = 'fixed';
+      textarea.style.opacity = '0';
+      document.body.appendChild(textarea);
+      textarea.select();
+      const copied = document.execCommand('copy');
+      textarea.remove();
+      if (!copied) throw new Error('Clipboard access was unavailable');
+    }
+
     let configuredModels = {};
-    function setModel(providerName) {
+    const selectedModels = {};
+    function setModel(providerName, selectedModel) {
       model.replaceChildren();
       (configuredModels[providerName] || []).forEach((item) => {
         const option = document.createElement('option');
@@ -84,6 +135,21 @@
         option.textContent = item.label;
         model.appendChild(option);
       });
+      model.value = selectedModel || selectedModels[providerName] || model.options[0]?.value || '';
+      if (!model.value && model.options.length) model.selectedIndex = 0;
+      selectedModels[providerName] = model.value;
+    }
+
+    function providerLabel() {
+      return provider.value === 'openai' ? 'ChatGPT / OpenAI' : provider.value[0].toUpperCase() + provider.value.slice(1);
+    }
+
+    function updateStatus() {
+      const selectedOption = model.options[model.selectedIndex];
+      selectedModels[provider.value] = model.value;
+      status.dataset.provider = provider.value;
+      status.dataset.state = 'ready';
+      status.textContent = selectedOption ? `${providerLabel()} · ${selectedOption.textContent}` : `${providerLabel()} unavailable`;
     }
 
     async function loadConfig() {
@@ -92,16 +158,18 @@
         const config = await response.json();
         provider.value = config.provider;
         configuredModels = config.models || {};
-        setModel(config.provider);
-        status.textContent = config.provider === 'ollama'
-          ? `Ollama · ${config.ollama.model}`
-          : config.provider === 'openai' ? `ChatGPT / OpenAI · ${config.openai.model}` : `Bedrock · ${config.model}`;
-      } catch { status.textContent = 'Ready'; }
+        setModel(config.provider, config.model);
+        updateStatus();
+      } catch {
+        status.dataset.state = 'error';
+        status.textContent = 'Configuration unavailable';
+      }
     }
     provider.addEventListener('change', () => {
       setModel(provider.value);
-      status.textContent = `${provider.value === 'openai' ? 'ChatGPT / OpenAI' : provider.value[0].toUpperCase() + provider.value.slice(1)} selected`;
+      updateStatus();
     });
+    model.addEventListener('change', updateStatus);
     loadConfig();
 
     form.addEventListener('submit', async (event) => {
@@ -132,7 +200,10 @@
           throw new Error('The model returned an empty response');
         }
 
-        addMessage('Bot', data.response);
+        addMessage('Bot', data.response, { copyable: true });
+        if (data.truncated) {
+          addMessage('Notice', 'The displayed response was truncated. Increase MAX_RESPONSE_CHARS and restart the server to allow more text.');
+        }
       } catch (error) {
         addMessage('Error', error.message || 'Unable to contact the chat service');
       } finally {
@@ -140,6 +211,22 @@
         button.textContent = 'Send';
         input.focus();
       }
+    });
+
+    downloadConversation.addEventListener('click', () => {
+      const text = [
+        'Orbit AI conversation',
+        `Exported: ${new Date().toLocaleString()}`,
+        '',
+        ...conversation.map(({ label, message }) => `${label}:\n${message}`)
+      ].join('\n\n');
+      const blob = new Blob([text], { type: 'text/plain;charset=utf-8' });
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = `orbit-conversation-${new Date().toISOString().slice(0, 10)}.txt`;
+      link.click();
+      URL.revokeObjectURL(url);
     });
   </script>
 </body>
