@@ -1,7 +1,11 @@
 const axios = require('axios');
 const express = require('express');
+const { write: log } = require('../logger');
 
 const router = express.Router();
+
+// Provider defaults are kept in one place so the configuration endpoint, request
+// validation, and runtime adapters all resolve models consistently.
 const defaultBedrockUrl = 'https://bedrock-runtime.us-east-1.amazonaws.com';
 const defaultOllamaUrl = 'http://localhost:11434/v1';
 const defaultOllamaModel = 'qwen2.5-coder:7b';
@@ -9,7 +13,13 @@ const defaultBedrockModel = 'global.amazon.nova-2-lite-v1:0';
 const defaultOpenaiUrl = 'https://api.openai.com/v1';
 const defaultOpenaiModel = 'gpt-6-luna';
 const maxResponseChars = getPositiveInteger(process.env.MAX_RESPONSE_CHARS, 200000, 1000000);
+// Prevent unexpectedly large upstream bodies from consuming excessive memory before
+// the application can apply its assistant-text response limit.
 const maxUpstreamResponseBytes = 8 * 1024 * 1024;
+
+// These are the models exposed by the UI. Bedrock IDs are validated because model
+// selection changes the Converse URL; OpenAI IDs are similarly restricted to the
+// models this application documents and supports.
 const bedrockModels = [
   { id: 'global.openai.gpt-6-luna', label: 'GPT-6 Luna' },
   { id: 'global.anthropic.claude-haiku-5-5', label: 'Claude Haiku 5.5' },
@@ -22,6 +32,7 @@ const openaiModels = [
 ];
 
 function getPositiveInteger(value, fallback, maximum) {
+  // Environment variables are strings, so normalize them and cap unsafe values.
   const parsed = Number.parseInt(value, 10);
   return Number.isInteger(parsed) && parsed > 0
     ? Math.min(parsed, maximum)
@@ -29,6 +40,8 @@ function getPositiveInteger(value, fallback, maximum) {
 }
 
 function getProviderConfig() {
+  // Read configuration per request so tests and long-running processes can use the
+  // current environment without duplicating provider-specific fallback logic.
   const provider = (process.env.AI_PROVIDER || 'bedrock').toLowerCase();
   const requestedBedrockModel = process.env.BEDROCK_MODEL || defaultBedrockModel;
   const bedrockModel = bedrockModels.some((item) => item.id === requestedBedrockModel)
@@ -49,6 +62,8 @@ function getProviderConfig() {
 }
 
 function getChatCompletionsUrl(baseUrl) {
+  // Ollama exposes an OpenAI-compatible endpoint, but callers may provide either its
+  // base URL or the complete /chat/completions URL.
   const normalizedUrl = baseUrl.replace(/\/$/, '');
   return normalizedUrl.endsWith('/chat/completions')
     ? normalizedUrl
@@ -56,6 +71,8 @@ function getChatCompletionsUrl(baseUrl) {
 }
 
 function getConverseUrl(baseUrl, model) {
+  // Bedrock Converse uses the model ID as part of the runtime request path. Encode it
+  // so a model identifier cannot alter the intended URL structure.
   const normalizedUrl = baseUrl.replace(/\/$/, '');
   const modelPath = encodeURIComponent(model);
   return normalizedUrl.endsWith('/converse')
@@ -63,7 +80,9 @@ function getConverseUrl(baseUrl, model) {
     : `${normalizedUrl}/model/${modelPath}/converse`;
 }
 
-// Normalize Converse and OpenAI-compatible responses to one frontend shape.
+// Normalize Responses, Converse, and OpenAI-compatible payloads to one frontend
+// shape. Keeping this adapter tolerant of common response variants makes provider
+// switching transparent to the browser.
 function getAssistantText(data) {
   const candidates = [
     data && data.output_text,
@@ -81,6 +100,7 @@ function getAssistantText(data) {
 }
 
 function limitResponse(text) {
+  // Return a flag for the UI so it can explain why a long answer was shortened.
   if (text.length <= maxResponseChars) {
     return { response: text, truncated: false };
   }
@@ -92,6 +112,8 @@ function limitResponse(text) {
 }
 
 function getModelForRequest(config, provider, requestedModel) {
+  // Never allow a browser-supplied model to bypass the supported Bedrock/OpenAI
+  // allowlists. Ollama model names remain configurable because they are local.
   if (provider === 'openai') {
     return openaiModels.some((item) => item.id === requestedModel)
       ? requestedModel
@@ -107,6 +129,7 @@ function getModelForRequest(config, provider, requestedModel) {
 }
 
 router.get('/config', (req, res) => {
+  // The UI calls this endpoint at startup to populate provider and model selectors.
   const config = getProviderConfig();
   res.json({
     provider: config.provider,
@@ -137,6 +160,8 @@ router.get('/config', (req, res) => {
 // Bedrock uses Converse, OpenAI uses Responses, and Ollama uses its
 // OpenAI-compatible Chat Completions endpoint.
 router.post('/', async (req, res) => {
+  // This endpoint deliberately stays provider-neutral: the browser sends a prompt,
+  // provider, and model, while the adapter below builds the provider-specific body.
   const prompt = req.body && req.body.prompt;
 
   if (typeof prompt !== 'string' || !prompt.trim()) {
@@ -156,26 +181,27 @@ router.post('/', async (req, res) => {
   const openaiApiKey = process.env.OPENAI_API_KEY;
 
   if (provider === 'bedrock' && !accessToken) {
-    console.error(JSON.stringify({
-      level: 'error',
+    // Bedrock requires the bearer token, while Ollama does not require credentials.
+    log('error', 'chat', {
       event: 'bedrock_configuration_error',
       message: 'ACCESS_TOKEN is not configured'
-    }));
+    });
     return res.status(500).json({ error: 'Chat service is not configured' });
   }
 
   if (provider === 'openai' && !openaiApiKey) {
-    console.error(JSON.stringify({
-      level: 'error',
+    log('error', 'chat', {
       event: 'openai_configuration_error',
       message: 'OPENAI_API_KEY is not configured'
-    }));
+    });
     return res.status(500).json({ error: 'OpenAI chat service is not configured' });
   }
 
   const startedAt = Date.now();
 
   try {
+    // Select the provider endpoint and payload format. Bedrock uses Converse,
+    // OpenAI uses Responses, and Ollama uses Chat Completions.
     const isBedrock = provider === 'bedrock';
     const isOpenai = provider === 'openai';
     const url = isBedrock
@@ -193,6 +219,8 @@ router.post('/', async (req, res) => {
         stream: false
       };
 
+    // Use one bounded, non-streaming request path so all providers return the same
+    // JSON shape to the browser and large upstream bodies are controlled.
     const upstreamResponse = await axios.post(url, body, {
       timeout: 120000,
       maxContentLength: maxUpstreamResponseBytes,
@@ -206,19 +234,18 @@ router.post('/', async (req, res) => {
 
     const assistantText = getAssistantText(upstreamResponse.data);
     if (!assistantText) {
-      console.error(JSON.stringify({
-        level: 'error',
+      // A successful HTTP status does not guarantee a usable model response.
+      log('error', 'chat', {
         event: `${provider}_invalid_response`,
         model,
         status: upstreamResponse.status,
         durationMs: Date.now() - startedAt
-      }));
+      });
       return res.status(502).json({ error: `${isBedrock ? 'Bedrock Converse' : isOpenai ? 'OpenAI Responses' : 'Ollama'} returned an unexpected response format` });
     }
 
     const { response, truncated } = limitResponse(assistantText);
-    console.info(JSON.stringify({
-      level: 'info',
+    log('info', 'chat', {
       event: 'chat_completed',
       provider,
       model,
@@ -226,12 +253,13 @@ router.post('/', async (req, res) => {
       outputChars: assistantText.length,
       truncated,
       durationMs: Date.now() - startedAt
-    }));
+    });
     return res.json({ response, truncated });
   } catch (error) {
+    // Do not expose raw provider errors or credentials to the browser; log useful
+    // diagnostics server-side and return a stable application-level error.
     const upstreamBody = error.response && error.response.data;
-    console.error(JSON.stringify({
-      level: 'error',
+    log('error', 'chat', {
       event: `${provider}_request_failed`,
       model,
       status: error.response && error.response.status,
@@ -241,7 +269,7 @@ router.post('/', async (req, res) => {
         ? `${provider === 'bedrock' ? 'Bedrock Converse' : provider === 'openai' ? 'OpenAI Responses' : 'Ollama'} returned an error response`
         : 'Network or timeout error',
       durationMs: Date.now() - startedAt
-    }));
+    });
     return res.status(502).json({ error: `Failed to get a response from ${provider === 'bedrock' ? 'Bedrock Converse' : provider === 'openai' ? 'OpenAI Responses' : 'Ollama'}` });
   }
 });

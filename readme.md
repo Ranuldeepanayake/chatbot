@@ -31,6 +31,7 @@ Set the provider and its connection settings as environment variables:
 | `OPENAI_API_KEY` | OpenAI only | — | OpenAI API key |
 | `PORT` | No | `4000` | Port on which the application listens |
 | `HOST_PORT` | No | `4000` | Host port exposed by Docker Compose |
+| `PUBLIC_BASE_URL` | No | Request origin | Optional public origin used in generated `sitemap.xml` and `robots.txt` |
 | `MAX_RESPONSE_CHARS` | No | `200000` | Maximum assistant text returned per message; output beyond this is safely truncated |
 
 The browser always calls `POST /chat`. Bedrock requests use Converse JSON with `messages[].content[].text`; Ollama requests use OpenAI-compatible JSON with `model` and `messages[].content`; OpenAI requests use the Responses API. Do not commit real credentials.
@@ -60,6 +61,18 @@ This split is intentional: Bedrock Converse supports both required Bedrock model
 ```sh
 npm ci
 ```
+
+## Crawling and SEO files
+
+The application dynamically serves `GET /sitemap.xml` and `GET /robots.txt`; no generated files need to be committed. The sitemap contains the public home page, and `robots.txt` allows the page while excluding `/chat` API routes and linking to the sitemap.
+
+`PUBLIC_BASE_URL` tells the application which public origin search engines should use in those files. This matters when a reverse proxy, load balancer, Docker network, or tunnel forwards a public request such as `https://chat.example.com` to an internal address such as `http://chatbot:4000`. Without an explicit value, the app uses the request host and `X-Forwarded-Proto` header; that works when the proxy preserves the public host and protocol. Set the variable when the proxy rewrites them or when you want a fixed canonical URL:
+
+```env
+PUBLIC_BASE_URL=https://chat.example.com
+```
+
+Use only the scheme and hostname (optionally a port), without a path, query string, or trailing slash. It is optional for direct local hosting, where the generated URLs can use an address such as `http://localhost:4000`.
 
 For Bedrock, set `ACCESS_TOKEN`, `BEDROCK_MODEL`, and, if needed, `BEDROCK_URL`. For Ollama, make sure the model is available (`ollama pull qwen2.5-coder:7b`) and configure the variables for your shell:
 
@@ -184,7 +197,7 @@ Dockerfile         Container image definition
 
 ## Logging and errors
 
-At startup, the server writes a structured `server_started` log containing the selected provider, port, response limit, sanitized Bedrock/Ollama/OpenAI endpoints, configured model names, and credential-presence booleans. It never logs token values. Runtime logs include provider, model, output length, truncation state, upstream status, and request duration; prompts and credentials are not logged. Invalid prompts receive `400`; provider request failures or unrecognized response formats receive a clear `502` error shown in the chat UI.
+At startup, the server writes a structured `server_started` log containing an ISO timestamp, module, selected provider, port, response limit, sanitized Bedrock/Ollama/OpenAI endpoints, configured model names, and credential-presence booleans. It never logs token values. Runtime logs include timestamp, module, provider, model, output length, truncation state, upstream status, and request duration; prompts and credentials are not logged. Invalid prompts receive `400`; provider request failures or unrecognized response formats receive a clear `502` error shown in the chat UI.
 
 ## Large responses
 
